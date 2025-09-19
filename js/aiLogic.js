@@ -1,0 +1,659 @@
+/**
+ * =============================================================================
+ * AI LOGIC MODULE - Minimax and Alpha-Beta Pruning Algorithms
+ * =============================================================================
+ *
+ * This module implements AI decision-making algorithms for the Go game:
+ * - Minimax Algorithm: Exhaustive search of game tree
+ * - Alpha-Beta Pruning: Optimized minimax with branch pruning
+ * - Move evaluation and position assessment
+ * - Performance tracking and statistics
+ *
+ * Algorithm Overview:
+ *
+ * MINIMAX:
+ * - Explores all possible moves to a given depth
+ * - Assumes both players play optimally
+ * - Maximizing player tries to maximize score
+ * - Minimizing player tries to minimize score
+ * - Time complexity: O(b^d) where b=branching factor, d=depth
+ *
+ * ALPHA-BETA PRUNING:
+ * - Same logic as minimax but with early termination
+ * - Maintains alpha (best maximizer score) and beta (best minimizer score)
+ * - Prunes branches that can't improve the result
+ * - Can reduce time complexity to O(b^(d/2)) in best case
+ */
+
+// =============================================================================
+// AI CONFIGURATION AND SETTINGS
+// =============================================================================
+
+/**
+ * AI configuration object containing algorithm settings
+ * These can be modified through the UI to change AI behavior
+ */
+let aiSettings = {
+  // Algorithm type: "minimax" or "alphabeta"
+  algorithm: "alphabeta",
+
+  // Search depth: how many moves ahead the AI looks
+  // Higher depth = stronger play but exponentially slower
+  depth: 2,
+
+  // Game mode: determines when AI should move
+  // "humanVsAi" - Human vs AI, "humanVsHuman" - Human vs Human
+  gameMode: "humanVsAi",
+};
+
+/**
+ * Performance tracking object for AI algorithm analysis
+ * Useful for comparing algorithm efficiency and debugging
+ */
+let performanceStats = {
+  // Total number of board positions evaluated
+  nodesEvaluated: 0,
+
+  // Time taken for last AI move (in milliseconds)
+  timeUsed: 0,
+
+  // Nodes evaluated per second (calculated)
+  nodesPerSecond: 0,
+
+  // Depth reached in last search
+  actualDepth: 0,
+};
+
+// =============================================================================
+// CORE MINIMAX ALGORITHM
+// =============================================================================
+
+/**
+ * Minimax algorithm implementation for Go
+ *
+ * This is the classic game tree search algorithm that explores all possible
+ * moves and countermoves to find the best move for the current player.
+ *
+ * How it works:
+ * 1. If at maximum depth or game over, return position evaluation
+ * 2. If maximizing player's turn, try to find move that gives highest score
+ * 3. If minimizing player's turn, try to find move that gives lowest score
+ * 4. Recursively evaluate all possible moves
+ * 5. Return the best score and corresponding move
+ *
+ * @param {Array} board - Current board state (2D array)
+ * @param {number} depth - How many moves deep to search
+ * @param {number} player - Current player (BLACK or WHITE)
+ * @param {boolean} isMaximizing - True if current player is maximizing
+ * @param {number} originalPlayer - The AI player we're finding move for
+ * @returns {Array} [bestScore, bestMove] where bestMove is [row, col] or null
+ */
+function minimax(board, depth, player, isMaximizing, originalPlayer) {
+  // Increment node counter for performance tracking
+  performanceStats.nodesEvaluated++;
+
+  // BASE CASE: Stop recursion at maximum depth or if game is over
+  if (depth === 0) {
+    // Evaluate position from AI's perspective
+    return [evaluatePosition(board, originalPlayer), null];
+  }
+
+  // Get all possible legal moves for current player
+  const possibleMoves = getLegalMoves(board, player);
+
+  // If no legal moves available, evaluate current position
+  if (possibleMoves.length === 0) {
+    return [evaluatePosition(board, originalPlayer), null];
+  }
+
+  // MAXIMIZING PLAYER: AI trying to maximize its score
+  if (isMaximizing) {
+    let maxScore = -Infinity; // Start with worst possible score
+    let bestMove = null; // Track which move gives best score
+
+    // Try each possible move
+    for (const [row, col] of possibleMoves) {
+      // Create copy of board to test this move
+      const newBoard = copyBoard(board);
+      newBoard[row][col] = player;
+
+      // Remove any stones captured by this move
+      const opponent = player === BLACK ? WHITE : BLACK;
+      removeCapturedGroups(newBoard, opponent);
+
+      // Recursively evaluate this move
+      // Next level will be minimizing (opponent's turn)
+      const [score] = minimax(
+        newBoard,
+        depth - 1,
+        opponent,
+        false,
+        originalPlayer
+      );
+
+      // Keep track of best move found so far
+      if (score > maxScore) {
+        maxScore = score;
+        bestMove = [row, col];
+      }
+    }
+
+    return [maxScore, bestMove];
+  }
+
+  // MINIMIZING PLAYER: Opponent trying to minimize AI's score
+  else {
+    let minScore = Infinity; // Start with best possible score for AI
+    let bestMove = null; // Track which move minimizes AI's advantage
+
+    // Try each possible move
+    for (const [row, col] of possibleMoves) {
+      // Create copy of board to test this move
+      const newBoard = copyBoard(board);
+      newBoard[row][col] = player;
+
+      // Remove any stones captured by this move
+      const opponent = player === BLACK ? WHITE : BLACK;
+      removeCapturedGroups(newBoard, opponent);
+
+      // Recursively evaluate this move
+      // Next level will be maximizing (AI's turn)
+      const [score] = minimax(
+        newBoard,
+        depth - 1,
+        opponent,
+        true,
+        originalPlayer
+      );
+
+      // Keep track of move that gives lowest score for AI
+      if (score < minScore) {
+        minScore = score;
+        bestMove = [row, col];
+      }
+    }
+
+    return [minScore, bestMove];
+  }
+}
+
+// =============================================================================
+// ALPHA-BETA PRUNING ALGORITHM
+// =============================================================================
+
+/**
+ * Alpha-Beta Pruning algorithm - optimized version of minimax
+ *
+ * This algorithm produces the same result as minimax but can run much faster
+ * by eliminating branches that provably can't lead to a better result.
+ *
+ * Key concepts:
+ * - Alpha: Best score maximizing player has found so far (lower bound)
+ * - Beta: Best score minimizing player has found so far (upper bound)
+ * - Pruning: If alpha >= beta, remaining moves won't change the result
+ *
+ * Example of pruning:
+ * If the maximizer has already found a move worth 5 points (alpha=5),
+ * and the minimizer has a move that guarantees at most 3 points (beta=3),
+ * then alpha >= beta, so we can stop searching this branch.
+ *
+ * @param {Array} board - Current board state
+ * @param {number} depth - Search depth remaining
+ * @param {number} player - Current player
+ * @param {boolean} isMaximizing - True if maximizing player's turn
+ * @param {number} alpha - Best score for maximizing player so far
+ * @param {number} beta - Best score for minimizing player so far
+ * @param {number} originalPlayer - The AI player we're finding move for
+ * @returns {Array} [bestScore, bestMove]
+ */
+function minimaxAlphaBeta(
+  board,
+  depth,
+  player,
+  isMaximizing,
+  alpha,
+  beta,
+  originalPlayer
+) {
+  // Performance tracking
+  performanceStats.nodesEvaluated++;
+
+  // BASE CASE: Terminal depth or game over
+  if (depth === 0) {
+    return [evaluatePosition(board, originalPlayer), null];
+  }
+
+  // Get all legal moves for current player
+  const possibleMoves = getLegalMoves(board, player);
+
+  // No moves available - evaluate current position
+  if (possibleMoves.length === 0) {
+    return [evaluatePosition(board, originalPlayer), null];
+  }
+
+  // MAXIMIZING PLAYER (AI's turn)
+  if (isMaximizing) {
+    let maxScore = -Infinity;
+    let bestMove = null;
+
+    for (const [row, col] of possibleMoves) {
+      // Test this move
+      const newBoard = copyBoard(board);
+      newBoard[row][col] = player;
+
+      const opponent = player === BLACK ? WHITE : BLACK;
+      removeCapturedGroups(newBoard, opponent);
+
+      // Recursive call for opponent's response
+      const [score] = minimaxAlphaBeta(
+        newBoard,
+        depth - 1,
+        opponent,
+        false, // Next level is minimizing
+        alpha, // Pass current alpha
+        beta, // Pass current beta
+        originalPlayer
+      );
+
+      // Update best score and move
+      if (score > maxScore) {
+        maxScore = score;
+        bestMove = [row, col];
+      }
+
+      // Update alpha (best score for maximizer)
+      alpha = Math.max(alpha, score);
+
+      // ALPHA-BETA PRUNING: If alpha >= beta, prune remaining moves
+      // This means the minimizer already has a better option elsewhere,
+      // so they won't allow this branch to occur
+      if (beta <= alpha) {
+        break; // Beta cutoff - stop evaluating remaining moves
+      }
+    }
+
+    return [maxScore, bestMove];
+  }
+
+  // MINIMIZING PLAYER (Opponent's turn)
+  else {
+    let minScore = Infinity;
+    let bestMove = null;
+
+    for (const [row, col] of possibleMoves) {
+      // Test this move
+      const newBoard = copyBoard(board);
+      newBoard[row][col] = player;
+
+      const opponent = player === BLACK ? WHITE : BLACK;
+      removeCapturedGroups(newBoard, opponent);
+
+      // Recursive call for AI's response
+      const [score] = minimaxAlphaBeta(
+        newBoard,
+        depth - 1,
+        opponent,
+        true, // Next level is maximizing
+        alpha, // Pass current alpha
+        beta, // Pass current beta
+        originalPlayer
+      );
+
+      // Update best score and move
+      if (score < minScore) {
+        minScore = score;
+        bestMove = [row, col];
+      }
+
+      // Update beta (best score for minimizer)
+      beta = Math.min(beta, score);
+
+      // ALPHA-BETA PRUNING: If beta <= alpha, prune remaining moves
+      // The maximizer already has a better option, so this branch won't occur
+      if (beta <= alpha) {
+        break; // Alpha cutoff - stop evaluating remaining moves
+      }
+    }
+
+    return [minScore, bestMove];
+  }
+}
+
+// =============================================================================
+// MAIN AI DECISION FUNCTION
+// =============================================================================
+
+/**
+ * Find the best move for the AI using the selected algorithm
+ * This is the main entry point for AI decision making
+ *
+ * @param {Array} board - Current board state
+ * @param {number} player - AI player color (BLACK or WHITE)
+ * @returns {Array|null} [row, col] of best move, or null if no moves available
+ */
+function findBestMove(board, player) {
+  console.log(`AI (${player === BLACK ? "Black" : "White"}) thinking...`);
+
+  // Reset performance tracking
+  performanceStats.nodesEvaluated = 0;
+  performanceStats.actualDepth = aiSettings.depth;
+
+  // Record start time for performance measurement
+  const startTime = performance.now();
+
+  let bestMove;
+  let bestScore;
+
+  // Choose algorithm based on settings
+  if (aiSettings.algorithm === "minimax") {
+    console.log(`Using Minimax algorithm, depth ${aiSettings.depth}`);
+    [bestScore, bestMove] = minimax(
+      board,
+      aiSettings.depth,
+      player,
+      true,
+      player
+    );
+  } else {
+    console.log(`Using Alpha-Beta pruning, depth ${aiSettings.depth}`);
+    [bestScore, bestMove] = minimaxAlphaBeta(
+      board,
+      aiSettings.depth,
+      player,
+      true, // AI is maximizing player
+      -Infinity, // Initial alpha
+      Infinity, // Initial beta
+      player
+    );
+  }
+
+  // Calculate performance statistics
+  performanceStats.timeUsed = performance.now() - startTime;
+  performanceStats.nodesPerSecond = Math.round(
+    performanceStats.nodesEvaluated / (performanceStats.timeUsed / 1000)
+  );
+
+  // Log AI decision
+  if (bestMove) {
+    console.log(
+      `AI selected move (${bestMove[0]}, ${bestMove[1]}) with score ${bestScore}`
+    );
+    console.log(
+      `Performance: ${
+        performanceStats.nodesEvaluated
+      } nodes in ${performanceStats.timeUsed.toFixed(1)}ms`
+    );
+  } else {
+    console.log("AI found no legal moves - will pass");
+  }
+
+  return bestMove;
+}
+
+// =============================================================================
+// POSITION EVALUATION HEURISTICS
+// =============================================================================
+
+/**
+ * Enhanced position evaluation function for Go
+ * This function analyzes a board position and returns a score indicating
+ * how good the position is for the specified player
+ *
+ * Evaluation factors:
+ * 1. Stone count: More stones generally better
+ * 2. Capture count: Captured stones are valuable
+ * 3. Group strength: Groups with more liberties are safer
+ * 4. Center control: Center positions have more influence
+ * 5. Corner control: Corners can be valuable for territory
+ *
+ * @param {Array} board - Board position to evaluate
+ * @param {number} player - Player to evaluate for (BLACK or WHITE)
+ * @returns {number} Position evaluation score (positive = good for player)
+ */
+function evaluatePosition(board, player) {
+  let score = 0;
+  const opponent = player === BLACK ? WHITE : BLACK;
+
+  // Factor 1: Basic stone counting
+  const playerStones = board.flat().filter((cell) => cell === player).length;
+  const opponentStones = board
+    .flat()
+    .filter((cell) => cell === opponent).length;
+  score += (playerStones - opponentStones) * 10;
+
+  // Factor 2: Group analysis - stronger groups are better
+  const playerGroups = findAllGroups(board, player);
+  const opponentGroups = findAllGroups(board, opponent);
+
+  // Evaluate each group's strength based on liberties
+  for (const group of playerGroups) {
+    const liberties = countLiberties(board, group);
+    if (liberties === 1) {
+      score -= group.length * 5; // Group in danger (atari)
+    } else if (liberties >= 3) {
+      score += group.length * 2; // Safe group bonus
+    }
+  }
+
+  for (const group of opponentGroups) {
+    const liberties = countLiberties(board, group);
+    if (liberties === 1) {
+      score += group.length * 5; // Opponent group in danger
+    } else if (liberties >= 3) {
+      score -= group.length * 2; // Safe opponent group penalty
+    }
+  }
+
+  // Factor 3: Positional bonuses
+  for (let row = 0; row < BOARD_SIZE; row++) {
+    for (let col = 0; col < BOARD_SIZE; col++) {
+      if (board[row][col] === player) {
+        // Center control bonus
+        const centerDistance =
+          Math.abs(row - BOARD_SIZE / 2) + Math.abs(col - BOARD_SIZE / 2);
+        const centerBonus = Math.max(0, BOARD_SIZE / 3 - centerDistance / 2);
+        score += centerBonus;
+
+        // Edge and corner bonuses
+        const edgeDistance = Math.min(
+          row,
+          col,
+          BOARD_SIZE - 1 - row,
+          BOARD_SIZE - 1 - col
+        );
+        if (edgeDistance === 0) {
+          score += 3; // Edge bonus
+        }
+        if (
+          (row === 0 || row === BOARD_SIZE - 1) &&
+          (col === 0 || col === BOARD_SIZE - 1)
+        ) {
+          score += 5; // Corner bonus
+        }
+      } else if (board[row][col] === opponent) {
+        // Apply same penalties for opponent
+        const centerDistance =
+          Math.abs(row - BOARD_SIZE / 2) + Math.abs(col - BOARD_SIZE / 2);
+        const centerBonus = Math.max(0, BOARD_SIZE / 3 - centerDistance / 2);
+        score -= centerBonus;
+
+        const edgeDistance = Math.min(
+          row,
+          col,
+          BOARD_SIZE - 1 - row,
+          BOARD_SIZE - 1 - col
+        );
+        if (edgeDistance === 0) {
+          score -= 3;
+        }
+        if (
+          (row === 0 || row === BOARD_SIZE - 1) &&
+          (col === 0 || col === BOARD_SIZE - 1)
+        ) {
+          score -= 5;
+        }
+      }
+    }
+  }
+
+  return score;
+}
+
+/**
+ * Find all groups of stones for a specific player
+ * Used for advanced position evaluation
+ *
+ * @param {Array} board - Board to analyze
+ * @param {number} player - Player color to find groups for
+ * @returns {Array} Array of groups, where each group is array of [row,col] positions
+ */
+function findAllGroups(board, player) {
+  const groups = [];
+  const visited = new Set();
+
+  for (let row = 0; row < BOARD_SIZE; row++) {
+    for (let col = 0; col < BOARD_SIZE; col++) {
+      const positionKey = `${row},${col}`;
+
+      if (board[row][col] === player && !visited.has(positionKey)) {
+        const group = getGroup(board, row, col);
+        groups.push(group);
+
+        // Mark all positions in this group as visited
+        for (const [groupRow, groupCol] of group) {
+          visited.add(`${groupRow},${groupCol}`);
+        }
+      }
+    }
+  }
+
+  return groups;
+}
+
+// =============================================================================
+// AI MOVE EXECUTION AND GAME MODE DETECTION
+// =============================================================================
+
+/**
+ * Determine if the AI should make a move based on current game state
+ *
+ * @returns {boolean} True if AI should move now
+ */
+function shouldAIMove() {
+  // Don't move if game is over
+  if (game.gameOver) return false;
+
+  // Check game mode and current player
+  switch (aiSettings.gameMode) {
+    case "humanVsAi":
+      // AI plays as White (second player)
+      return game.currentPlayer === WHITE;
+    case "aiVsHuman":
+      // AI plays as Black (first player)
+      return game.currentPlayer === BLACK;
+    case "humanVsHuman":
+      // No AI moves in human vs human
+      return false;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Execute an AI move
+ * This function handles the complete AI move process:
+ * 1. Find best move using selected algorithm
+ * 2. Execute the move or pass if no good moves
+ * 3. Update performance statistics
+ */
+async function makeAIMove() {
+  if (game.gameOver) return;
+
+  console.log("AI making move...");
+
+  try {
+    // Find the best move using AI algorithms
+    const bestMove = findBestMove(game.board, game.currentPlayer);
+
+    if (bestMove) {
+      // Execute the move
+      const [row, col] = bestMove;
+      const success = makeMove(row, col, game.currentPlayer);
+
+      if (!success) {
+        console.error("AI attempted illegal move - passing instead");
+        passMove();
+      }
+    } else {
+      // No good moves found - AI passes
+      console.log("AI passes - no beneficial moves found");
+      passMove();
+    }
+  } catch (error) {
+    console.error("Error in AI move calculation:", error);
+    // Fall back to passing if there's an error
+    passMove();
+  }
+}
+
+// =============================================================================
+// AI SETTINGS AND CONFIGURATION
+// =============================================================================
+
+/**
+ * Update AI algorithm setting
+ *
+ * @param {string} algorithm - "minimax" or "alphabeta"
+ */
+function setAIAlgorithm(algorithm) {
+  if (algorithm === "minimax" || algorithm === "alphabeta") {
+    aiSettings.algorithm = algorithm;
+    console.log(`AI algorithm changed to: ${algorithm}`);
+  } else {
+    console.error(`Invalid algorithm: ${algorithm}`);
+  }
+}
+
+/**
+ * Update AI search depth
+ *
+ * @param {number} depth - Search depth (1-6 recommended)
+ */
+function setAIDepth(depth) {
+  if (depth >= 1 && depth <= 6) {
+    aiSettings.depth = depth;
+    console.log(`AI search depth changed to: ${depth}`);
+  } else {
+    console.error(`Invalid depth: ${depth}. Must be between 1 and 6.`);
+  }
+}
+
+/**
+ * Update game mode
+ *
+ * @param {string} mode - "humanVsAi", "aiVsHuman", or "humanVsHuman"
+ */
+function setGameMode(mode) {
+  const validModes = ["humanVsAi", "aiVsHuman", "humanVsHuman"];
+  if (validModes.includes(mode)) {
+    aiSettings.gameMode = mode;
+    console.log(`Game mode changed to: ${mode}`);
+  } else {
+    console.error(`Invalid game mode: ${mode}`);
+  }
+}
+
+/**
+ * Get current AI performance statistics
+ *
+ * @returns {Object} Performance stats object
+ */
+function getAIStats() {
+  return { ...performanceStats }; // Return copy to prevent modification
+}
+
+// =============================================================================
+// EXPORT FUNCTIONS FOR OTHER MODULES
+// =============================================================================
+
+// These functions will be available to other modules that import this file
