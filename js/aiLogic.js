@@ -8,6 +8,22 @@
  * - Alpha-Beta Pruning: Optimized minimax with branch pruning
  * - Move evaluation and position assessment
  * - Performance tracking and statistics
+ * - Time budget per move and candidate move ordering
+ *
+ * Dependencies
+ * ------------
+ * - heuristics.js: evaluatePosition(), getCandidateMoves(), scoreMoveHeuristic()
+ * - gameLogic.js: board representation and rules helpers
+ *
+ * Public API (globals)
+ * --------------------
+ * - setAIAlgorithm(name: 'minimax'|'alphabeta')
+ * - setAIDepth(depth: number)
+ * - setGameMode(mode: 'humanVsAi'|'humanVsHuman')
+ * - shouldAIMove(): boolean
+ * - makeAIMove(): Promise<{type:'move'|'pass', row?:number, col?:number, player:'Black'|'White'}>
+ * - findBestMove(board, player): [row, col] | null
+ * - getAIStats(): { nodesEvaluated, timeUsed, nodesPerSecond, actualDepth }
  *
  * Algorithm Overview:
  *
@@ -30,8 +46,14 @@
 // =============================================================================
 
 /**
- * AI configuration object containing algorithm settings
- * These can be modified through the UI to change AI behavior
+ * AI configuration object containing algorithm settings.
+ * Tunable via UI controls in index.html.
+ * @typedef {Object} AISettings
+ * @property {'minimax'|'alphabeta'} algorithm Search algorithm to use
+ * @property {number} depth Search depth (plies)
+ * @property {'humanVsAi'|'humanVsHuman'} gameMode Controls whether AI should move
+ * @property {number} maxTimeMs Per-move time budget in ms; 0 disables
+ * @property {number} maxCandidatesBase Base cap for root candidate trimming
  */
 let aiSettings = {
   // Algorithm type: "minimax" or "alphabeta"
@@ -53,8 +75,12 @@ let aiSettings = {
 };
 
 /**
- * Performance tracking object for AI algorithm analysis
- * Useful for comparing algorithm efficiency and debugging
+ * Performance tracking for AI search.
+ * @typedef {Object} AIStats
+ * @property {number} nodesEvaluated Number of nodes visited last move
+ * @property {number} timeUsed Milliseconds consumed by the last move
+ * @property {number} nodesPerSecond Throughput for the last move
+ * @property {number} actualDepth Depth used in last search
  */
 let performanceStats = {
   // Total number of board positions evaluated
@@ -70,9 +96,7 @@ let performanceStats = {
   actualDepth: 0,
 };
 
-/**
- * Reset AI performance statistics so UI reflects current state
- */
+/** Reset AI performance statistics so UI reflects current state. */
 function resetAIStats() {
   performanceStats.nodesEvaluated = 0;
   performanceStats.timeUsed = 0;
@@ -85,24 +109,14 @@ function resetAIStats() {
 // =============================================================================
 
 /**
- * Minimax algorithm implementation for Go
+ * Minimax algorithm (no pruning).
  *
- * This is the classic game tree search algorithm that explores all possible
- * moves and countermoves to find the best move for the current player.
- *
- * How it works:
- * 1. If at maximum depth or game over, return position evaluation
- * 2. If maximizing player's turn, try to find move that gives highest score
- * 3. If minimizing player's turn, try to find move that gives lowest score
- * 4. Recursively evaluate all possible moves
- * 5. Return the best score and corresponding move
- *
- * @param {Array} board - Current board state (2D array)
- * @param {number} depth - How many moves deep to search
- * @param {number} player - Current player (BLACK or WHITE)
- * @param {boolean} isMaximizing - True if current player is maximizing
- * @param {number} originalPlayer - The AI player we're finding move for
- * @returns {Array} [bestScore, bestMove] where bestMove is [row, col] or null
+ * @param {number[][]} board Current board state
+ * @param {number} depth Remaining depth to search
+ * @param {number} player Current player (BLACK or WHITE)
+ * @param {boolean} isMaximizing True if node is maximizing for originalPlayer
+ * @param {number} originalPlayer Root player this search scores for
+ * @returns {[number, [number,number]|null]} [bestScore, bestMove]
  */
 function minimax(board, depth, player, isMaximizing, originalPlayer) {
   // Increment node counter for performance tracking
@@ -198,29 +212,17 @@ function minimax(board, depth, player, isMaximizing, originalPlayer) {
 // =============================================================================
 
 /**
- * Alpha-Beta Pruning algorithm - optimized version of minimax
+ * Alpha–beta pruning minimax with optional deadline for time control.
  *
- * This algorithm produces the same result as minimax but can run much faster
- * by eliminating branches that provably can't lead to a better result.
- *
- * Key concepts:
- * - Alpha: Best score maximizing player has found so far (lower bound)
- * - Beta: Best score minimizing player has found so far (upper bound)
- * - Pruning: If alpha >= beta, remaining moves won't change the result
- *
- * Example of pruning:
- * If the maximizer has already found a move worth 5 points (alpha=5),
- * and the minimizer has a move that guarantees at most 3 points (beta=3),
- * then alpha >= beta, so we can stop searching this branch.
- *
- * @param {Array} board - Current board state
- * @param {number} depth - Search depth remaining
- * @param {number} player - Current player
- * @param {boolean} isMaximizing - True if maximizing player's turn
- * @param {number} alpha - Best score for maximizing player so far
- * @param {number} beta - Best score for minimizing player so far
- * @param {number} originalPlayer - The AI player we're finding move for
- * @returns {Array} [bestScore, bestMove]
+ * @param {number[][]} board Current board state
+ * @param {number} depth Search depth remaining
+ * @param {number} player Current player
+ * @param {boolean} isMaximizing True if maximizing player's turn
+ * @param {number} alpha Best score for maximizing player so far
+ * @param {number} beta Best score for minimizing player so far
+ * @param {number} originalPlayer Root player this search scores for
+ * @param {number|null} deadline performance.now() cutoff; if exceeded, return static eval
+ * @returns {[number, [number,number]|null]} [bestScore, bestMove]
  */
 function minimaxAlphaBeta(
   board,
@@ -351,12 +353,11 @@ function minimaxAlphaBeta(
 // =============================================================================
 
 /**
- * Find the best move for the AI using the selected algorithm
- * This is the main entry point for AI decision making
+ * Find the best move using the configured algorithm and time budget.
  *
- * @param {Array} board - Current board state
- * @param {number} player - AI player color (BLACK or WHITE)
- * @returns {Array|null} [row, col] of best move, or null if no moves available
+ * @param {number[][]} board Current board state
+ * @param {number} player AI player color (BLACK or WHITE)
+ * @returns {[number,number]|null} Best move or null
  */
 function findBestMove(board, player) {
   // Suppress non-error console output
@@ -432,111 +433,6 @@ function findBestMove(board, player) {
 // POSITION EVALUATION HEURISTICS
 // =============================================================================
 
-/**
- * Enhanced position evaluation function for Go
- * This function analyzes a board position and returns a score indicating
- * how good the position is for the specified player
- *
- * Evaluation factors:
- * 1. Stone count: More stones generally better
- * 2. Capture count: Captured stones are valuable
- * 3. Group strength: Groups with more liberties are safer
- * 4. Center control: Center positions have more influence
- * 5. Corner control: Corners can be valuable for territory
- *
- * @param {Array} board - Board position to evaluate
- * @param {number} player - Player to evaluate for (BLACK or WHITE)
- * @returns {number} Position evaluation score (positive = good for player)
- */
-function evaluatePosition(board, player) {
-  let score = 0;
-  const opponent = player === BLACK ? WHITE : BLACK;
-
-  // Factor 1: Basic stone counting
-  const playerStones = board.flat().filter((cell) => cell === player).length;
-  const opponentStones = board
-    .flat()
-    .filter((cell) => cell === opponent).length;
-  score += (playerStones - opponentStones) * 10;
-
-  // Factor 2: Group analysis - stronger groups are better
-  const playerGroups = findAllGroups(board, player);
-  const opponentGroups = findAllGroups(board, opponent);
-
-  // Evaluate each group's strength based on liberties
-  for (const group of playerGroups) {
-    const liberties = countLiberties(board, group);
-    if (liberties === 1) {
-      score -= group.length * 5; // Group in danger (atari)
-    } else if (liberties >= 3) {
-      score += group.length * 2; // Safe group bonus
-    }
-  }
-
-  for (const group of opponentGroups) {
-    const liberties = countLiberties(board, group);
-    if (liberties === 1) {
-      score += group.length * 5; // Opponent group in danger
-    } else if (liberties >= 3) {
-      score -= group.length * 2; // Safe opponent group penalty
-    }
-  }
-
-  // Factor 3: Positional bonuses
-  for (let row = 0; row < BOARD_SIZE; row++) {
-    for (let col = 0; col < BOARD_SIZE; col++) {
-      if (board[row][col] === player) {
-        // Center control bonus
-        const centerDistance =
-          Math.abs(row - BOARD_SIZE / 2) + Math.abs(col - BOARD_SIZE / 2);
-        const centerBonus = Math.max(0, BOARD_SIZE / 3 - centerDistance / 2);
-        score += centerBonus;
-
-        // Edge and corner bonuses
-        const edgeDistance = Math.min(
-          row,
-          col,
-          BOARD_SIZE - 1 - row,
-          BOARD_SIZE - 1 - col
-        );
-        if (edgeDistance === 0) {
-          score += 3; // Edge bonus
-        }
-        if (
-          (row === 0 || row === BOARD_SIZE - 1) &&
-          (col === 0 || col === BOARD_SIZE - 1)
-        ) {
-          score += 5; // Corner bonus
-        }
-      } else if (board[row][col] === opponent) {
-        // Apply same penalties for opponent
-        const centerDistance =
-          Math.abs(row - BOARD_SIZE / 2) + Math.abs(col - BOARD_SIZE / 2);
-        const centerBonus = Math.max(0, BOARD_SIZE / 3 - centerDistance / 2);
-        score -= centerBonus;
-
-        const edgeDistance = Math.min(
-          row,
-          col,
-          BOARD_SIZE - 1 - row,
-          BOARD_SIZE - 1 - col
-        );
-        if (edgeDistance === 0) {
-          score -= 3;
-        }
-        if (
-          (row === 0 || row === BOARD_SIZE - 1) &&
-          (col === 0 || col === BOARD_SIZE - 1)
-        ) {
-          score -= 5;
-        }
-      }
-    }
-  }
-
-  return score;
-}
-
 // =============================================================================
 // MOVE CANDIDATES AND ORDERING (PERFORMANCE)
 // =============================================================================
@@ -608,37 +504,15 @@ function scoreMoveHeuristic(board, row, col, player) {
  * @param {number} player - Player color to find groups for
  * @returns {Array} Array of groups, where each group is array of [row,col] positions
  */
-function findAllGroups(board, player) {
-  const groups = [];
-  const visited = new Set();
-
-  for (let row = 0; row < BOARD_SIZE; row++) {
-    for (let col = 0; col < BOARD_SIZE; col++) {
-      const positionKey = `${row},${col}`;
-
-      if (board[row][col] === player && !visited.has(positionKey)) {
-        const group = getGroup(board, row, col);
-        groups.push(group);
-
-        // Mark all positions in this group as visited
-        for (const [groupRow, groupCol] of group) {
-          visited.add(`${groupRow},${groupCol}`);
-        }
-      }
-    }
-  }
-
-  return groups;
-}
+// evaluatePosition and findAllGroups are now provided by heuristics.js
 
 // =============================================================================
 // AI MOVE EXECUTION AND GAME MODE DETECTION
 // =============================================================================
 
 /**
- * Determine if the AI should make a move based on current game state
- *
- * @returns {boolean} True if AI should move now
+ * Determine if the AI should make a move based on current game state.
+ * @returns {boolean}
  */
 function shouldAIMove() {
   // Don't move if game is over
@@ -658,11 +532,10 @@ function shouldAIMove() {
 }
 
 /**
- * Execute an AI move
- * This function handles the complete AI move process:
- * 1. Find best move using selected algorithm
- * 2. Execute the move or pass if no good moves
- * 3. Update performance statistics
+ * Execute one AI move.
+ * Finds the best move, applies it, or passes if none.
+ * Returns a small summary object for UI.
+ * @returns {Promise<{type:'move'|'pass', row?:number, col?:number, player:'Black'|'White'}>}
  */
 async function makeAIMove() {
   if (game.gameOver) return;
@@ -711,9 +584,8 @@ async function makeAIMove() {
 // =============================================================================
 
 /**
- * Update AI algorithm setting
- *
- * @param {string} algorithm - "minimax" or "alphabeta"
+ * Update AI algorithm setting.
+ * @param {'minimax'|'alphabeta'} algorithm
  */
 function setAIAlgorithm(algorithm) {
   if (algorithm === "minimax" || algorithm === "alphabeta") {
@@ -726,9 +598,8 @@ function setAIAlgorithm(algorithm) {
 }
 
 /**
- * Update AI search depth
- *
- * @param {number} depth - Search depth (1-6 recommended)
+ * Update AI search depth.
+ * @param {number} depth 1–6 recommended
  */
 function setAIDepth(depth) {
   if (depth >= 1 && depth <= 6) {
@@ -741,9 +612,8 @@ function setAIDepth(depth) {
 }
 
 /**
- * Update game mode
- *
- * @param {string} mode - "humanVsAi" or "humanVsHuman"
+ * Update game mode.
+ * @param {'humanVsAi'|'humanVsHuman'} mode
  */
 function setGameMode(mode) {
   const validModes = ["humanVsAi", "humanVsHuman"];
@@ -757,9 +627,8 @@ function setGameMode(mode) {
 }
 
 /**
- * Get current AI performance statistics
- *
- * @returns {Object} Performance stats object
+ * Get current AI performance statistics.
+ * @returns {AIStats}
  */
 function getAIStats() {
   return { ...performanceStats }; // Return copy to prevent modification
