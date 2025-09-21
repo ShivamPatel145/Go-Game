@@ -114,6 +114,8 @@ let toastContainer = null;
 
 // Result modal overlay reference
 let resultModalOverlay = null;
+// Welcome modal overlay reference
+let welcomeModalOverlay = null;
 // Move log disabled; removed unused state
 
 // =============================================================================
@@ -1292,3 +1294,83 @@ window.showGameResultModal = showGameResultModal;
 // =============================================================================
 
 // These functions will be available to other modules
+
+// =============================================================================
+// WELCOME MODAL POPUP
+// =============================================================================
+
+function showWelcomeModal() {
+  return new Promise((resolve) => {
+    try {
+      // Clean up any existing welcome modal
+      if (welcomeModalOverlay) {
+        welcomeModalOverlay.remove();
+        welcomeModalOverlay = null;
+      }
+
+      welcomeModalOverlay = document.createElement("div");
+      welcomeModalOverlay.id = "welcomeModalOverlay";
+      welcomeModalOverlay.className = "modal-overlay";
+
+      const panel = document.createElement("div");
+      panel.className = "modal-panel";
+
+      // Header
+      const header = document.createElement("div");
+      header.className = "modal-header";
+      const title = document.createElement("h3");
+      title.textContent = "Welcome to Go Game!";
+      const closeBtn = document.createElement("button");
+      closeBtn.textContent = "Close";
+      closeBtn.className = "btn btn-ghost";
+      closeBtn.onclick = () => {
+        if (welcomeModalOverlay) {
+          welcomeModalOverlay.remove();
+          welcomeModalOverlay = null;
+        }
+        resolve();
+      };
+      header.appendChild(title);
+      header.appendChild(closeBtn);
+
+      // Body
+      const body = document.createElement("div");
+      body.className = "modal-body";
+      body.innerHTML = `
+        <div class="tips" style="font-size: 0.9rem; color: #374151;">
+          <p>This is an implementation of the ancient board game Go with AI opponents.</p>
+          <p>You can play against AI using either Minimax or Alpha-Beta pruning algorithms.</p>
+          <p>Click on board intersections to place stones. Capture opponent stones by surrounding them!</p>
+          <p style="margin-top:8px; color:#6b7280;">Tip: Two consecutive passes end the game. Use the left sidebar to change board size and AI difficulty.</p>
+        </div>
+      `;
+
+      // Footer
+      const footer = document.createElement("div");
+      footer.className = "modal-footer";
+      const startBtn = document.createElement("button");
+      startBtn.textContent = "Start Playing";
+      startBtn.className = "btn btn-primary";
+      startBtn.onclick = () => {
+        if (welcomeModalOverlay) {
+          welcomeModalOverlay.remove();
+          welcomeModalOverlay = null;
+        }
+        resolve();
+      };
+      footer.appendChild(startBtn);
+
+      panel.appendChild(header);
+      panel.appendChild(body);
+      panel.appendChild(footer);
+      welcomeModalOverlay.appendChild(panel);
+      document.body.appendChild(welcomeModalOverlay);
+    } catch (e) {
+      // Fail open without blocking
+      resolve();
+    }
+  });
+}
+
+// Expose for main.js
+window.showWelcomeModal = showWelcomeModal;

@@ -44,6 +44,12 @@ let aiSettings = {
   // Game mode: determines when AI should move
   // "humanVsAi" - Human vs AI, "humanVsHuman" - Human vs Human
   gameMode: "humanVsAi",
+
+  // Optional time budget per AI move (milliseconds). If 0, no time cap.
+  maxTimeMs: 1200,
+
+  // Base cap for candidate moves considered at top levels (reduced as depth increases)
+  maxCandidatesBase: 16,
 };
 
 /**
@@ -223,7 +229,8 @@ function minimaxAlphaBeta(
   isMaximizing,
   alpha,
   beta,
-  originalPlayer
+  originalPlayer,
+  deadline // number | null (performance.now() cutoff)
 ) {
   // Performance tracking
   performanceStats.nodesEvaluated++;
@@ -233,8 +240,14 @@ function minimaxAlphaBeta(
     return [evaluatePosition(board, originalPlayer), null];
   }
 
+  // Time cutoff
+  if (deadline && performance.now() > deadline) {
+    // Return a static evaluation to unwind quickly
+    return [evaluatePosition(board, originalPlayer), null];
+  }
+
   // Get all legal moves for current player
-  const possibleMoves = getLegalMoves(board, player);
+  const possibleMoves = getCandidateMoves(board, player);
 
   // No moves available - evaluate current position
   if (possibleMoves.length === 0) {
@@ -247,6 +260,7 @@ function minimaxAlphaBeta(
     let bestMove = null;
 
     for (const [row, col] of possibleMoves) {
+      if (deadline && performance.now() > deadline) break;
       // Test this move
       const newBoard = copyBoard(board);
       newBoard[row][col] = player;
@@ -262,7 +276,8 @@ function minimaxAlphaBeta(
         false, // Next level is minimizing
         alpha, // Pass current alpha
         beta, // Pass current beta
-        originalPlayer
+        originalPlayer,
+        deadline
       );
 
       // Update best score and move
@@ -291,6 +306,7 @@ function minimaxAlphaBeta(
     let bestMove = null;
 
     for (const [row, col] of possibleMoves) {
+      if (deadline && performance.now() > deadline) break;
       // Test this move
       const newBoard = copyBoard(board);
       newBoard[row][col] = player;
@@ -306,7 +322,8 @@ function minimaxAlphaBeta(
         true, // Next level is maximizing
         alpha, // Pass current alpha
         beta, // Pass current beta
-        originalPlayer
+        originalPlayer,
+        deadline
       );
 
       // Update best score and move
@@ -350,31 +367,51 @@ function findBestMove(board, player) {
 
   // Record start time for performance measurement
   const startTime = performance.now();
+  const deadline =
+    aiSettings.maxTimeMs && aiSettings.maxTimeMs > 0
+      ? startTime + aiSettings.maxTimeMs
+      : null;
 
-  let bestMove;
-  let bestScore;
+  let bestMove = null;
+  let bestScore = -Infinity;
 
   // Choose algorithm based on settings
-  if (aiSettings.algorithm === "minimax") {
-    // Using Minimax algorithm
-    [bestScore, bestMove] = minimax(
-      board,
-      aiSettings.depth,
-      player,
-      true,
-      player
-    );
-  } else {
-    // Using Alpha-Beta pruning
-    [bestScore, bestMove] = minimaxAlphaBeta(
-      board,
-      aiSettings.depth,
-      player,
-      true, // AI is maximizing player
-      -Infinity, // Initial alpha
-      Infinity, // Initial beta
-      player
-    );
+  const rootMoves = getCandidateMoves(board, player, /*forRoot*/ true);
+  for (const [row, col] of rootMoves) {
+    // Time check before expanding a root child
+    if (deadline && performance.now() > deadline) break;
+
+    const newBoard = copyBoard(board);
+    newBoard[row][col] = player;
+    const opponent = player === BLACK ? WHITE : BLACK;
+    removeCapturedGroups(newBoard, opponent);
+
+    let score;
+    if (aiSettings.algorithm === "minimax") {
+      [score] = minimax(
+        newBoard,
+        aiSettings.depth - 1,
+        opponent,
+        false,
+        player
+      );
+    } else {
+      [score] = minimaxAlphaBeta(
+        newBoard,
+        aiSettings.depth - 1,
+        opponent,
+        false,
+        -Infinity,
+        Infinity,
+        player,
+        deadline
+      );
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMove = [row, col];
+    }
   }
 
   // Calculate performance statistics
@@ -386,6 +423,8 @@ function findBestMove(board, player) {
   // Log AI decision
   // No non-error logging; UI may display stats elsewhere
 
+  // Fallback if timeout happened before any move evaluated
+  if (!bestMove && rootMoves.length > 0) return rootMoves[0];
   return bestMove;
 }
 
@@ -496,6 +535,69 @@ function evaluatePosition(board, player) {
   }
 
   return score;
+}
+
+// =============================================================================
+// MOVE CANDIDATES AND ORDERING (PERFORMANCE)
+// =============================================================================
+
+/**
+ * Generate and order promising candidate moves to reduce branching.
+ * - Prefer moves near existing stones
+ * - Prefer captures
+ * - Prefer center/stronger influence positions
+ * Optionally trims to a top-N set that depends on depth and board size.
+ */
+function getCandidateMoves(board, player, forRoot = false) {
+  const legal = getLegalMoves(board, player);
+  if (legal.length <= 1) return legal;
+
+  // Heuristic score for move ordering
+  const scored = legal.map(([r, c]) => {
+    const h = scoreMoveHeuristic(board, r, c, player);
+    return { move: [r, c], score: h };
+  });
+
+  // Sort desc by heuristic score
+  scored.sort((a, b) => b.score - a.score);
+
+  // Limit number of candidates, tighter caps for deeper searches
+  const size = BOARD_SIZE;
+  const base = aiSettings.maxCandidatesBase || 16;
+  const depth = aiSettings.depth || 2;
+  let cap = base - Math.max(0, depth - 2) * 3; // reduce 3 per extra depth
+  if (size >= 19) cap += 2; // allow a couple more on 19x19
+  cap = Math.max(6, Math.min(cap, base));
+
+  const trimmed = forRoot
+    ? scored.slice(0, cap)
+    : scored.slice(0, Math.max(8, Math.floor(cap * 0.75)));
+  return trimmed.map((s) => s.move);
+}
+
+function scoreMoveHeuristic(board, row, col, player) {
+  // Simulate to measure captures and local strength
+  const opponent = player === BLACK ? WHITE : BLACK;
+  const b = copyBoard(board);
+  b[row][col] = player;
+  const captured = removeCapturedGroups(b, opponent); // number
+
+  // Center/edge influence
+  const centerDist =
+    Math.abs(row - BOARD_SIZE / 2) + Math.abs(col - BOARD_SIZE / 2);
+  const centerBonus = Math.max(0, BOARD_SIZE / 3 - centerDist / 2);
+
+  // Neighbor density (more nearby stones is usually more relevant)
+  const neighbors = getNeighbors(row, col);
+  let friend = 0,
+    foe = 0;
+  for (const [nr, nc] of neighbors) {
+    if (board[nr][nc] === player) friend++;
+    else if (board[nr][nc] === opponent) foe++;
+  }
+
+  // Weighting: captures dominate ordering, then center/neighbor
+  return captured * 100 + centerBonus * 2 + friend * 3 + foe;
 }
 
 /**

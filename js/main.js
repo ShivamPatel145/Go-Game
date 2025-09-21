@@ -203,9 +203,12 @@ function handleApplicationStartup() {
     // Auto-restore silently without showing confirm/alert dialogs
     restoreGameState(interruptedGame);
   } else {
-    // Show welcome message for new users
+    // Show welcome message for new users in a modal
     if (gameHistory.totalGames === 0) {
-      showWelcomeMessage();
+      if (typeof showWelcomeModal === "function") {
+        // Fire and forget; user can dismiss and continue
+        showWelcomeModal();
+      }
     } else {
       // Returning user - just start normally
       updateAllUI();
@@ -799,25 +802,7 @@ function hideLoadingIndicator() {
 /**
  * Show welcome message for new users
  */
-function showWelcomeMessage() {
-  const welcomeHTML = `
-        <div style="text-align: center; margin: 20px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
-            <h2>Welcome to Go Game!</h2>
-            <p>This is an implementation of the ancient board game Go with AI opponents.</p>
-            <p>You can play against AI using either Minimax or Alpha-Beta pruning algorithms.</p>
-            <p>Click on board intersections to place stones. Capture opponent stones by surrounding them!</p>
-            <button onclick="this.parentElement.style.display='none'">Start Playing</button>
-        </div>
-    `;
-
-  // Show welcome message at the top of the page
-  const gameArea = document.querySelector(".main");
-  if (gameArea) {
-    const welcomeDiv = document.createElement("div");
-    welcomeDiv.innerHTML = welcomeHTML;
-    gameArea.insertBefore(welcomeDiv, gameArea.firstChild);
-  }
-}
+// Legacy inline welcome removed in favor of modal in uiComponents.js
 
 /**
  * Show game recovery dialog
