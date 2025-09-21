@@ -14,7 +14,8 @@
       <header class="header">
         <!-- Left side: Board size selection -->
         <div class="header-left">
-          <select id="boardSize" class="header-select">
+          <select id="boardSize" class="header-select" aria-label="Board size">
+            <option value="7">7×7 (Tiny)</option>
             <option value="9">9×9 (Small)</option>
             <option value="13" selected>13×13 (Medium)</option>
             <option value="19">19×19 (Large)</option>
@@ -59,6 +60,8 @@
               <!-- Shows current score -->
               <div class="score" id="gameScore">Black: 0 | White: 0</div>
             </div>
+            <!-- Lightweight move-by-move log -->
+            <div class="move-log" id="moveLog"></div>
           </div>
 
           <!-- AI algorithm and difficulty settings -->
@@ -87,7 +90,7 @@
 
               <!-- AI search depth slider (difficulty) -->
               <div class="setting-row">
-                <label>Depth: <span id="depthValue">2</span></label>
+                <label for="depth">Depth: <span id="depthValue">2</span></label>
                 <input
                   type="range"
                   id="depth"
@@ -95,6 +98,7 @@
                   max="4"
                   value="2"
                   class="depth-slider"
+                  aria-describedby="depthValue"
                 />
               </div>
             </div>
@@ -102,7 +106,24 @@
 
           <!-- Game history and statistics -->
           <div class="control-card">
-            <h3>Game History</h3>
+            <h3
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+              "
+            >
+              <span>Game History</span>
+              <button
+                id="resetHistory"
+                class="btn btn-ghost"
+                aria-label="Reset game history"
+                title="Reset game history"
+              >
+                Reset
+              </button>
+            </h3>
             <div id="gameHistoryStats" class="performance-stats">
               <div class="stat-row">
                 <span class="stat-label">Total Games:</span>

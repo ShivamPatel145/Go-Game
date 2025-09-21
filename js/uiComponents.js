@@ -109,6 +109,13 @@ const visualConfig = {
   },
 };
 
+// Toast notification container reference
+let toastContainer = null;
+
+// Result modal overlay reference
+let resultModalOverlay = null;
+// Move log disabled; removed unused state
+
 // =============================================================================
 // INITIALIZATION AND DOM SETUP
 // =============================================================================
@@ -119,7 +126,7 @@ const visualConfig = {
  * Should be called once when the page loads
  */
 function initializeUI() {
-  console.log("Initializing UI components...");
+  // UI initialization started
 
   // Get canvas and context for board rendering
   canvas = document.getElementById("gameBoard");
@@ -134,20 +141,52 @@ function initializeUI() {
     return false;
   }
 
-  // Cache DOM element references for efficiency
+  // Cache DOM element references
   cacheDOMElements();
 
-  // Set up event listeners for user interactions
+  // Ensure board size selector reflects current board size (e.g., after restore)
+  if (uiElements.boardSizeSelector) {
+    const current = String(BOARD_SIZE);
+    if (uiElements.boardSizeSelector.value !== current) {
+      uiElements.boardSizeSelector.value = current;
+    }
+  }
+
+  // Hide move log container if present (feature disabled)
+  const moveLogEl = document.getElementById("moveLog");
+  if (moveLogEl) {
+    moveLogEl.style.display = "none";
+  }
+
+  // Set up event listeners
   setupEventListeners();
 
-  // Perform initial UI update
-  updateAllUI();
+  // Handle responsive sizing
+  setupResizeHandling();
 
-  // Draw the initial empty board
+  // Initial UI update and draw
+  updateAllUI();
   drawBoard();
 
-  console.log("UI initialization complete");
+  // UI initialization complete
   return true;
+}
+
+/**
+ * Setup responsive canvas resizing on window changes
+ */
+function setupResizeHandling() {
+  try {
+    const handler = debounce(() => {
+      resizeCanvas();
+    }, 100);
+    window.addEventListener("resize", handler);
+    window.addEventListener("orientationchange", handler);
+    // Initial sync
+    resizeCanvas();
+  } catch (e) {
+    // Non-error logging suppressed
+  }
 }
 
 /**
@@ -164,6 +203,8 @@ function cacheDOMElements() {
   uiElements.boardSizeSelector = document.getElementById("boardSize");
   uiElements.passButton = document.getElementById("pass");
   uiElements.resetButton = document.getElementById("reset");
+  // History controls
+  uiElements.resetHistoryButton = document.getElementById("resetHistory");
 
   // AI settings
   uiElements.algorithmRadios = document.querySelectorAll(
@@ -178,7 +219,7 @@ function cacheDOMElements() {
   // Log any missing elements for debugging
   for (const [key, element] of Object.entries(uiElements)) {
     if (!element || element.length === 0) {
-      console.warn(`UI element not found: ${key}`);
+      // Suppress warnings in console
     }
   }
 }
@@ -207,6 +248,14 @@ function setupEventListeners() {
     uiElements.resetButton.addEventListener("click", handleResetButtonClick);
   }
 
+  // Reset game history
+  if (uiElements.resetHistoryButton) {
+    uiElements.resetHistoryButton.addEventListener(
+      "click",
+      handleResetHistoryClick
+    );
+  }
+
   // Board size selection
   if (uiElements.boardSizeSelector) {
     uiElements.boardSizeSelector.addEventListener(
@@ -230,7 +279,7 @@ function setupEventListeners() {
     radio.addEventListener("change", handleGameModeChange);
   });
 
-  console.log("Event listeners set up successfully");
+  // Event listeners set up
 }
 
 // =============================================================================
@@ -416,6 +465,22 @@ function getStarPointPositions() {
   } else if (BOARD_SIZE === 9) {
     // Standard 9x9 star points
     positions.push([2, 2], [2, 6], [4, 4], [6, 2], [6, 6]);
+  } else if (BOARD_SIZE === 7) {
+    // 7x7: use center star point
+    const c = Math.floor(BOARD_SIZE / 2);
+    positions.push([c, c]);
+  } else if (BOARD_SIZE >= 11 && BOARD_SIZE % 2 === 1) {
+    // Generic odd board sizes >= 11: similar pattern to 13/19
+    const center = Math.floor(BOARD_SIZE / 2);
+    const margin = 3;
+    const inner = center;
+    const outer = BOARD_SIZE - 1 - margin;
+    const points = [margin, inner, outer];
+    for (const row of points) {
+      for (const col of points) {
+        positions.push([row, col]);
+      }
+    }
   }
 
   return positions;
@@ -513,13 +578,13 @@ function drawHoverPreview(layout) {
  */
 function handleCanvasClick(event) {
   if (game.gameOver) {
-    console.log("Game is over - click ignored");
+    // Click ignored: game over
     return;
   }
 
   // Don't allow moves if it's AI's turn
   if (shouldAIMove()) {
-    console.log("AI's turn - human click ignored");
+    // Click ignored: AI's turn
     return;
   }
 
@@ -528,31 +593,27 @@ function handleCanvasClick(event) {
 
   const { row, col } = coordinates;
 
-  console.log(`Human attempts move at (${row}, ${col})`);
+  // Human attempts move
 
-  // Attempt to make the move
-  const success = makeMove(row, col, game.currentPlayer);
-
-  if (success) {
-    // Clear hover preview since move was made
-    hoverPreview.isVisible = false;
-
-    // Update UI to reflect the move
-    updateAllUI();
-    drawBoard();
-
-    // Check if AI should move next
-    setTimeout(() => {
-      if (shouldAIMove() && !game.gameOver) {
-        makeAIMove().then(() => {
-          updateAllUI();
-          drawBoard();
-        });
+  // Use main coordinator so history, modal, and AI flow work correctly
+  if (typeof coordinateGameTurn === "function") {
+    coordinateGameTurn(row, col, game.currentPlayer).then((success) => {
+      if (success) {
+        hoverPreview.isVisible = false;
+        updateAllUI();
+        drawBoard();
+      } else {
+        // Illegal move attempted
       }
-    }, 300); // Small delay for better UX
+    });
   } else {
-    console.log("Illegal move attempted");
-    // Could add visual feedback for illegal move here
+    // Fallback to direct makeMove
+    const success = makeMove(row, col, game.currentPlayer);
+    if (success) {
+      hoverPreview.isVisible = false;
+      updateAllUI();
+      drawBoard();
+    }
   }
 }
 
@@ -622,8 +683,11 @@ function handleCanvasMouseLeave(event) {
  */
 function getMouseBoardCoordinates(event) {
   const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
+  // Map from CSS pixels to canvas coordinate space
+  const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
+  const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
+  const x = (event.clientX - rect.left) * scaleX;
+  const y = (event.clientY - rect.top) * scaleY;
 
   const layout = calculateBoardLayout();
 
@@ -665,6 +729,11 @@ function updateAllUI() {
   updateScoreDisplay();
   updateAIStatsDisplay();
   updateControlStates();
+  // Move log disabled; do not render
+  // Also refresh history sidebar widgets
+  if (typeof updateHistorySidebar === "function") {
+    updateHistorySidebar();
+  }
 }
 
 /**
@@ -689,12 +758,6 @@ function updatePlayerStatus() {
           game.currentPlayer === BLACK
             ? `${playerName} (Human) to play`
             : `${playerName} (AI) to play`;
-        break;
-      case "aiVsHuman":
-        statusText =
-          game.currentPlayer === BLACK
-            ? `${playerName} (AI) to play`
-            : `${playerName} (Human) to play`;
         break;
       case "humanVsHuman":
         statusText = `${playerName} (Human) to play`;
@@ -738,6 +801,8 @@ function updateScoreDisplay() {
   }
 }
 
+// Move log functionality removed as not used
+
 /**
  * Update AI performance statistics display
  * Shows algorithm info, nodes evaluated, time taken, etc.
@@ -747,48 +812,35 @@ function updateAIStatsDisplay() {
 
   const stats = getAIStats();
 
-  if (stats.nodesEvaluated > 0) {
-    const algorithmName =
-      aiSettings.algorithm === "minimax" ? "Minimax" : "Alpha-Beta";
+  const algorithmName =
+    aiSettings.algorithm === "minimax" ? "Minimax" : "Alpha-Beta";
 
-    uiElements.aiStats.innerHTML = `
-            <div class="stat-row">
-                <span class="stat-label">Algorithm:</span>
-                <span class="stat-value">${algorithmName}</span>
-            </div>
-            <div class="stat-row">
-                <span class="stat-label">Nodes:</span>
-                <span class="stat-value">${stats.nodesEvaluated.toLocaleString()}</span>
-            </div>
-            <div class="stat-row">
-                <span class="stat-label">Time:</span>
-                <span class="stat-value">${stats.timeUsed.toFixed(1)}ms</span>
-            </div>
-            <div class="stat-row">
-                <span class="stat-label">Rate:</span>
-                <span class="stat-value">${stats.nodesPerSecond.toLocaleString()}/s</span>
-            </div>
-        `;
-  } else {
-    uiElements.aiStats.innerHTML = `
-            <div class="stat-row">
-                <span class="stat-label">Algorithm:</span>
-                <span class="stat-value">-</span>
-            </div>
-            <div class="stat-row">
-                <span class="stat-label">Nodes:</span>
-                <span class="stat-value">-</span>
-            </div>
-            <div class="stat-row">
-                <span class="stat-label">Time:</span>
-                <span class="stat-value">-</span>
-            </div>
-            <div class="stat-row">
-                <span class="stat-label">Rate:</span>
-                <span class="stat-value">-</span>
-            </div>
-        `;
-  }
+  const hasStats = stats.nodesEvaluated > 0 && stats.timeUsed > 0;
+
+  uiElements.aiStats.innerHTML = `
+    <div class="stat-row">
+      <span class="stat-label">Algorithm:</span>
+      <span class="stat-value">${algorithmName}</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Nodes:</span>
+      <span class="stat-value">${
+        hasStats ? stats.nodesEvaluated.toLocaleString() : "-"
+      }</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Time:</span>
+      <span class="stat-value">${
+        hasStats ? stats.timeUsed.toFixed(1) + "ms" : "-"
+      }</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Rate:</span>
+      <span class="stat-value">${
+        hasStats ? stats.nodesPerSecond.toLocaleString() + "/s" : "-"
+      }</span>
+    </div>
+  `;
 }
 
 /**
@@ -811,7 +863,39 @@ function updateControlStates() {
     const gameInProgress =
       !game.gameOver &&
       game.board.some((row) => row.some((cell) => cell !== EMPTY));
+    // Keep selector value in sync with BOARD_SIZE
+    const current = String(BOARD_SIZE);
+    if (uiElements.boardSizeSelector.value !== current) {
+      uiElements.boardSizeSelector.value = current;
+    }
     uiElements.boardSizeSelector.disabled = gameInProgress;
+  }
+}
+
+/**
+ * Handle reset history button click
+ */
+function handleResetHistoryClick() {
+  try {
+    // Confirm without using window.confirm; use a lightweight toast flow
+    // Optionally, this can be replaced by a custom modal for better UX
+    const confirmed = true; // fallback to immediate confirm to avoid blocking dialogs
+    if (typeof clearGameHistory === "function") {
+      const ok = clearGameHistory(confirmed);
+      if (ok) {
+        showUserMessage("Game history cleared.", "success", 2000);
+        // refresh history widgets
+        if (typeof updateHistorySidebar === "function") {
+          updateHistorySidebar();
+        }
+        updateAllUI();
+      } else {
+        showUserMessage("History reset canceled.", "info", 2000);
+      }
+    }
+  } catch (e) {
+    // Show an error toast on failure
+    showUserMessage("Failed to clear game history.", "error");
   }
 }
 
@@ -824,19 +908,17 @@ function updateControlStates() {
  */
 function handlePassButtonClick() {
   if (!game.gameOver && !shouldAIMove()) {
-    console.log("Human passes");
-    passMove();
-    updateAllUI();
-
-    // Check if AI should move after pass
-    setTimeout(() => {
-      if (shouldAIMove() && !game.gameOver) {
-        makeAIMove().then(() => {
-          updateAllUI();
-          drawBoard();
-        });
-      }
-    }, 300);
+    // Human passes
+    if (typeof coordinatePassMove === "function") {
+      coordinatePassMove(game.currentPlayer).then(() => {
+        updateAllUI();
+        drawBoard();
+      });
+    } else {
+      passMove();
+      updateAllUI();
+      drawBoard();
+    }
   }
 }
 
@@ -844,19 +926,21 @@ function handlePassButtonClick() {
  * Handle reset button click
  */
 function handleResetButtonClick() {
-  console.log("Game reset requested");
-  resetGame();
-  updateAllUI();
-  drawBoard();
-
-  // If AI should start first, trigger AI move
-  if (shouldAIMove()) {
-    setTimeout(() => {
-      makeAIMove().then(() => {
-        updateAllUI();
-        drawBoard();
-      });
-    }, 500);
+  // Game reset requested
+  if (typeof startNewGame === "function") {
+    startNewGame();
+  } else {
+    resetGame();
+    updateAllUI();
+    drawBoard();
+    if (shouldAIMove()) {
+      setTimeout(() => {
+        makeAIMove().then(() => {
+          updateAllUI();
+          drawBoard();
+        });
+      }, 500);
+    }
   }
 }
 
@@ -867,12 +951,21 @@ function handleResetButtonClick() {
  */
 function handleBoardSizeChange(event) {
   const newSize = parseInt(event.target.value);
-  console.log(`Board size changed to ${newSize}x${newSize}`);
-
-  BOARD_SIZE = newSize;
-  resetGame();
-  updateAllUI();
-  drawBoard();
+  // Board size changed
+  // Route through centralized settings so preferences persist
+  if (typeof updateGameSettings === "function") {
+    updateGameSettings({ boardSize: newSize });
+  } else {
+    BOARD_SIZE = newSize;
+    if (typeof startNewGame === "function") {
+      startNewGame();
+    } else {
+      resetGame();
+      if (typeof resetAIStats === "function") resetAIStats();
+      updateAllUI();
+      drawBoard();
+    }
+  }
 }
 
 /**
@@ -882,8 +975,10 @@ function handleBoardSizeChange(event) {
  */
 function handleAlgorithmChange(event) {
   const algorithm = event.target.value;
-  console.log(`AI algorithm changed to: ${algorithm}`);
+  // AI algorithm changed
   setAIAlgorithm(algorithm);
+  // Refresh UI so performance panel reflects new algorithm immediately
+  updateAllUI();
 }
 
 /**
@@ -899,7 +994,8 @@ function handleDepthChange(event) {
     uiElements.depthValue.textContent = depth;
   }
 
-  console.log(`AI search depth changed to: ${depth}`);
+  // AI search depth changed
+  updateAllUI();
 }
 
 /**
@@ -911,7 +1007,7 @@ function handleGameModeChange(event) {
   const oldMode = aiSettings.gameMode;
   const newMode = event.target.value;
 
-  console.log(`Game mode changed from ${oldMode} to ${newMode}`);
+  // Game mode changed
 
   setGameMode(newMode);
 
@@ -923,11 +1019,10 @@ function handleGameModeChange(event) {
   // Show user feedback
   const modeNames = {
     humanVsAi: "Human vs AI",
-    aiVsHuman: "AI vs Human",
     humanVsHuman: "Human vs Human",
   };
 
-  console.log(`New game started: ${modeNames[newMode]}`);
+  // New game started
 
   // If AI should start, trigger AI move
   if (shouldAIMove()) {
@@ -952,13 +1047,47 @@ function handleGameModeChange(event) {
  * @param {number} duration - How long to show (milliseconds)
  */
 function showUserMessage(message, type = "info", duration = 3000) {
-  // This is a placeholder for a user notification system
-  // Could be implemented as a toast notification, modal, etc.
-  console.log(`${type.toUpperCase()}: ${message}`);
+  // Implement non-blocking toast notifications (no native alerts)
+  try {
+    if (!toastContainer) {
+      toastContainer = document.createElement("div");
+      toastContainer.id = "toastContainer";
+      toastContainer.style.cssText = `
+        position: fixed; right: 16px; bottom: 16px; z-index: 10000;
+        display: flex; flex-direction: column; gap: 10px; pointer-events: none;`;
+      document.body.appendChild(toastContainer);
+    }
 
-  // For now, just use alert for important messages
-  if (type === "error") {
-    alert(message);
+    const toast = document.createElement("div");
+    const bg =
+      {
+        info: "#2d6cdf",
+        success: "#2ecc71",
+        warning: "#f39c12",
+        error: "#e74c3c",
+      }[type] || "#2d6cdf";
+
+    toast.style.cssText = `
+      background: ${bg}; color: #fff; padding: 10px 14px; border-radius: 6px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.25); max-width: 340px; font-size: 14px;
+      opacity: 0; transform: translateY(10px); transition: all .2s ease; pointer-events: auto;`;
+    toast.textContent = message.replace(/\s+/g, " ").trim();
+    toastContainer.appendChild(toast);
+
+    // animate in
+    requestAnimationFrame(() => {
+      toast.style.opacity = "1";
+      toast.style.transform = "translateY(0)";
+    });
+
+    // auto remove
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      toast.style.transform = "translateY(10px)";
+      setTimeout(() => toast.remove(), 200);
+    }, Math.max(1500, duration));
+  } catch (e) {
+    // Suppress non-error console output
   }
 }
 
@@ -973,7 +1102,13 @@ function resizeCanvas() {
   const container = canvas.parentElement;
   if (!container) return;
 
-  const size = Math.min(container.clientWidth, container.clientHeight, 500);
+  // Use bounding rect to handle cases where clientHeight is 0
+  const rect = container.getBoundingClientRect();
+  const cw = Math.max(0, Math.floor(rect.width || container.clientWidth || 0));
+  let ch = Math.max(0, Math.floor(rect.height || container.clientHeight || 0));
+  if (!ch) ch = cw; // fallback to square using width if height is not measurable
+
+  const size = Math.min(cw || 0, ch || 0, 500) || cw || 400;
 
   canvas.width = size;
   canvas.height = size;
@@ -981,6 +1116,176 @@ function resizeCanvas() {
   // Redraw after resize
   drawBoard();
 }
+
+/**
+ * Update the left sidebar history summary values
+ */
+function updateHistorySidebar() {
+  try {
+    const card = document.querySelector("#gameHistoryStats");
+    if (!card) return;
+
+    const stats =
+      typeof getGameStatistics === "function" ? getGameStatistics() : null;
+    if (!stats) return;
+
+    const hvai = stats.humanVsAI;
+    const hvh = stats.humanVsHuman;
+    const last = gameHistory.lastGameResult;
+    const lastText = last
+      ? `Winner: ${(last.winner || "").toString().toUpperCase()} (${
+          last.gameMode === "humanVsAi" ? "vs AI" : "vs Human"
+        })`
+      : "-";
+
+    const gamesRow = `
+      <div class="history-item"><span class="title">Games Played</span><span class="meta">${stats.overview.totalGames}</span></div>
+    `;
+    const vsAiRow = `
+        <div class="history-item"><span class="title">Vs AI</span><span class="meta">Human ${
+          hvai.humanWins
+        } | AI ${hvai.aiWins}${
+      hvai.draws ? ` | Draw ${hvai.draws}` : ""
+    }</span></div>
+      `;
+    const vsHumanRow =
+      hvh.blackWins || hvh.whiteWins || hvh.draws
+        ? `
+        <div class="history-item"><span class="title">Vs Human</span><span class="meta">B ${
+          hvh.blackWins
+        } | W ${hvh.whiteWins}${
+            hvh.draws ? ` | Draw ${hvh.draws}` : ""
+          }</span></div>
+      `
+        : "";
+    const lastRow = `
+      <div class="history-item"><span class="title">Last</span><span class="meta">${lastText}</span></div>
+    `;
+
+    card.innerHTML = `<div class=\"history-list\">${gamesRow}${vsAiRow}${vsHumanRow}${lastRow}</div>`;
+  } catch (e) {
+    // Suppress non-error console output
+  }
+}
+
+// =============================================================================
+// RESULT MODAL POPUP
+// =============================================================================
+
+function showGameResultModal(gameResult, gameStats) {
+  return new Promise((resolve) => {
+    try {
+      // Remove any existing modal
+      if (resultModalOverlay) {
+        resultModalOverlay.remove();
+        resultModalOverlay = null;
+      }
+
+      resultModalOverlay = document.createElement("div");
+      resultModalOverlay.id = "resultModalOverlay";
+      resultModalOverlay.className = "modal-overlay";
+
+      const panel = document.createElement("div");
+      panel.className = "modal-panel";
+
+      // Determine winner details
+      const winner = gameResult.winner; // "Black" | "White" | "Tie"
+      const blackScore = gameResult.blackScore;
+      const whiteScore = gameResult.whiteScore;
+
+      let winnerType = ""; // Human or AI or Both
+      if (winner !== "Tie") {
+        if (aiSettings.gameMode === "humanVsAi") {
+          winnerType = winner === "Black" ? "Human" : "AI";
+        } else {
+          winnerType = "Human"; // human vs human
+        }
+      } else {
+        winnerType = aiSettings.gameMode === "humanVsHuman" ? "Draw" : "Draw";
+      }
+
+      const header = document.createElement("div");
+      header.className = "modal-header";
+      const title = document.createElement("h3");
+      title.textContent = winner === "Tie" ? "Game Tied" : `${winner} Wins!`;
+      const closeBtn = document.createElement("button");
+      closeBtn.textContent = "Cancel";
+      closeBtn.className = "btn btn-ghost";
+      closeBtn.onclick = () => {
+        resultModalOverlay.remove();
+        resultModalOverlay = null;
+        resolve();
+      };
+      header.appendChild(title);
+      header.appendChild(closeBtn);
+
+      const body = document.createElement("div");
+      body.className = "modal-body";
+
+      const badgeColor =
+        winner === "Black"
+          ? "badge badge--black"
+          : winner === "White"
+          ? "badge badge--white"
+          : "badge badge--draw";
+      const whoBadge =
+        winner === "Tie"
+          ? "badge badge--draw"
+          : winnerType === "AI"
+          ? "badge badge--ai"
+          : "badge badge--human";
+
+      const detailHTML = `
+        <div class="history-list">
+          <div class="history-item"><span class="title">Mode</span><span class="meta">${
+            aiSettings.gameMode
+          }</span></div>
+          <div class="history-item"><span class="title">Winner</span><span class="meta"><span class="${badgeColor}">${winner}</span> ${
+        winner !== "Tie"
+          ? `&nbsp;<span class="${whoBadge}">${winnerType}</span>`
+          : ""
+      }</span></div>
+          <div class="history-item"><span class="title">Final Score</span><span class="meta">Black: ${blackScore} • White: ${whiteScore}</span></div>
+          <div class="history-item"><span class="title">Captured</span><span class="meta">Black: ${
+            game.captured[BLACK]
+          } • White: ${game.captured[WHITE]}</span></div>
+          <div class="history-item"><span class="title">Summary</span><span class="meta">Moves: ${
+            gameStats.totalMoves
+          } • Duration: ${formatDuration(gameStats.duration)}</span></div>
+        </div>
+      `;
+      body.innerHTML = detailHTML;
+
+      const footer = document.createElement("div");
+      footer.className = "modal-footer";
+      const okBtn = document.createElement("button");
+      okBtn.textContent = "Start New Game";
+      okBtn.className = "btn btn-primary";
+      okBtn.onclick = () => {
+        if (resultModalOverlay) {
+          resultModalOverlay.remove();
+          resultModalOverlay = null;
+        }
+        resolve();
+      };
+      footer.appendChild(okBtn);
+
+      panel.appendChild(header);
+      panel.appendChild(body);
+      panel.appendChild(footer);
+      resultModalOverlay.appendChild(panel);
+      document.body.appendChild(resultModalOverlay);
+
+      // Keep modal open until user clicks OK or close (no auto close)
+    } catch (e) {
+      // Suppress non-error console output
+      resolve();
+    }
+  });
+}
+
+// Expose for other modules
+window.showGameResultModal = showGameResultModal;
 
 // =============================================================================
 // EXPORT FUNCTIONS FOR OTHER MODULES

@@ -476,7 +476,7 @@ function saveToLocalStorage(key, data) {
     localStorage.setItem(key, jsonString);
     return true;
   } catch (error) {
-    console.warn(`Failed to save to localStorage (${key}):`, error);
+    console.error(`Failed to save to localStorage (${key}):`, error);
     return false;
   }
 }
@@ -494,7 +494,7 @@ function loadFromLocalStorage(key, defaultValue = null) {
     if (jsonString === null) return defaultValue;
     return JSON.parse(jsonString);
   } catch (error) {
-    console.warn(`Failed to load from localStorage (${key}):`, error);
+    console.error(`Failed to load from localStorage (${key}):`, error);
     return defaultValue;
   }
 }
@@ -510,7 +510,7 @@ function removeFromLocalStorage(key) {
     localStorage.removeItem(key);
     return true;
   } catch (error) {
-    console.warn(`Failed to remove from localStorage (${key}):`, error);
+    console.error(`Failed to remove from localStorage (${key}):`, error);
     return false;
   }
 }
@@ -676,9 +676,8 @@ const Logger = {
    * @param {...*} args - Arguments to log
    */
   debug(...args) {
-    if (typeof DEBUG !== "undefined" && DEBUG) {
-      console.log(`[${new Date().toISOString()}] DEBUG:`, ...args);
-    }
+    // Suppressed: no console output for debug
+    return;
   },
 
   /**
@@ -687,7 +686,8 @@ const Logger = {
    * @param {...*} args - Arguments to log
    */
   info(...args) {
-    console.log(`[${new Date().toISOString()}] INFO:`, ...args);
+    // Suppressed: no console output for info
+    return;
   },
 
   /**
@@ -696,7 +696,8 @@ const Logger = {
    * @param {...*} args - Arguments to log
    */
   warn(...args) {
-    console.warn(`[${new Date().toISOString()}] WARN:`, ...args);
+    // Suppressed: no console output for warnings
+    return;
   },
 
   /**

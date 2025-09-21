@@ -64,6 +64,16 @@ let performanceStats = {
   actualDepth: 0,
 };
 
+/**
+ * Reset AI performance statistics so UI reflects current state
+ */
+function resetAIStats() {
+  performanceStats.nodesEvaluated = 0;
+  performanceStats.timeUsed = 0;
+  performanceStats.nodesPerSecond = 0;
+  performanceStats.actualDepth = 0;
+}
+
 // =============================================================================
 // CORE MINIMAX ALGORITHM
 // =============================================================================
@@ -332,7 +342,7 @@ function minimaxAlphaBeta(
  * @returns {Array|null} [row, col] of best move, or null if no moves available
  */
 function findBestMove(board, player) {
-  console.log(`AI (${player === BLACK ? "Black" : "White"}) thinking...`);
+  // Suppress non-error console output
 
   // Reset performance tracking
   performanceStats.nodesEvaluated = 0;
@@ -346,7 +356,7 @@ function findBestMove(board, player) {
 
   // Choose algorithm based on settings
   if (aiSettings.algorithm === "minimax") {
-    console.log(`Using Minimax algorithm, depth ${aiSettings.depth}`);
+    // Using Minimax algorithm
     [bestScore, bestMove] = minimax(
       board,
       aiSettings.depth,
@@ -355,7 +365,7 @@ function findBestMove(board, player) {
       player
     );
   } else {
-    console.log(`Using Alpha-Beta pruning, depth ${aiSettings.depth}`);
+    // Using Alpha-Beta pruning
     [bestScore, bestMove] = minimaxAlphaBeta(
       board,
       aiSettings.depth,
@@ -374,18 +384,7 @@ function findBestMove(board, player) {
   );
 
   // Log AI decision
-  if (bestMove) {
-    console.log(
-      `AI selected move (${bestMove[0]}, ${bestMove[1]}) with score ${bestScore}`
-    );
-    console.log(
-      `Performance: ${
-        performanceStats.nodesEvaluated
-      } nodes in ${performanceStats.timeUsed.toFixed(1)}ms`
-    );
-  } else {
-    console.log("AI found no legal moves - will pass");
-  }
+  // No non-error logging; UI may display stats elsewhere
 
   return bestMove;
 }
@@ -548,9 +547,6 @@ function shouldAIMove() {
     case "humanVsAi":
       // AI plays as White (second player)
       return game.currentPlayer === WHITE;
-    case "aiVsHuman":
-      // AI plays as Black (first player)
-      return game.currentPlayer === BLACK;
     case "humanVsHuman":
       // No AI moves in human vs human
       return false;
@@ -569,8 +565,6 @@ function shouldAIMove() {
 async function makeAIMove() {
   if (game.gameOver) return;
 
-  console.log("AI making move...");
-
   try {
     // Find the best move using AI algorithms
     const bestMove = findBestMove(game.board, game.currentPlayer);
@@ -583,16 +577,30 @@ async function makeAIMove() {
       if (!success) {
         console.error("AI attempted illegal move - passing instead");
         passMove();
+        return {
+          type: "pass",
+          player: game.currentPlayer === BLACK ? "White" : "Black",
+        };
       }
+      // Return the move that was played (player is the AI who just played before the switch)
+      const aiPlayer = game.currentPlayer === BLACK ? "White" : "Black";
+      return { type: "move", row, col, player: aiPlayer };
     } else {
       // No good moves found - AI passes
-      console.log("AI passes - no beneficial moves found");
       passMove();
+      return {
+        type: "pass",
+        player: game.currentPlayer === BLACK ? "White" : "Black",
+      };
     }
   } catch (error) {
     console.error("Error in AI move calculation:", error);
     // Fall back to passing if there's an error
     passMove();
+    return {
+      type: "pass",
+      player: game.currentPlayer === BLACK ? "White" : "Black",
+    };
   }
 }
 
@@ -608,7 +616,8 @@ async function makeAIMove() {
 function setAIAlgorithm(algorithm) {
   if (algorithm === "minimax" || algorithm === "alphabeta") {
     aiSettings.algorithm = algorithm;
-    console.log(`AI algorithm changed to: ${algorithm}`);
+    // setting applied
+    resetAIStats();
   } else {
     console.error(`Invalid algorithm: ${algorithm}`);
   }
@@ -622,7 +631,8 @@ function setAIAlgorithm(algorithm) {
 function setAIDepth(depth) {
   if (depth >= 1 && depth <= 6) {
     aiSettings.depth = depth;
-    console.log(`AI search depth changed to: ${depth}`);
+    // setting applied
+    resetAIStats();
   } else {
     console.error(`Invalid depth: ${depth}. Must be between 1 and 6.`);
   }
@@ -631,13 +641,14 @@ function setAIDepth(depth) {
 /**
  * Update game mode
  *
- * @param {string} mode - "humanVsAi", "aiVsHuman", or "humanVsHuman"
+ * @param {string} mode - "humanVsAi" or "humanVsHuman"
  */
 function setGameMode(mode) {
-  const validModes = ["humanVsAi", "aiVsHuman", "humanVsHuman"];
+  const validModes = ["humanVsAi", "humanVsHuman"];
   if (validModes.includes(mode)) {
     aiSettings.gameMode = mode;
-    console.log(`Game mode changed to: ${mode}`);
+    // setting applied
+    resetAIStats();
   } else {
     console.error(`Invalid game mode: ${mode}`);
   }

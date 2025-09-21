@@ -69,18 +69,7 @@ let appState = {
   recoveryAttempts: 0,
 };
 
-/**
- * Module dependency graph
- * Defines which modules depend on which others
- */
-const moduleDependencies = {
-  utils: [], // No dependencies
-  gameLogic: ["utils"], // Depends on utils
-  gameHistory: ["utils"], // Depends on utils
-  aiLogic: ["gameLogic", "utils"], // Depends on game logic and utils
-  uiComponents: ["gameLogic", "aiLogic", "gameHistory", "utils"], // Depends on all others
-  main: ["uiComponents", "aiLogic", "gameHistory", "gameLogic", "utils"], // Main depends on everything
-};
+// Module dependency graph removed (unused)
 
 // =============================================================================
 // APPLICATION INITIALIZATION
@@ -117,6 +106,11 @@ async function initializeApplication() {
 
     // Hide loading indicator
     hideLoadingIndicator();
+
+    // Apply saved preferences (board size, AI, mode) and sync UI
+    if (typeof loadUserPreferences === "function") {
+      loadUserPreferences();
+    }
 
     // Show welcome message or restore session
     handleApplicationStartup();
@@ -206,7 +200,8 @@ function handleApplicationStartup() {
   const interruptedGame = loadFromLocalStorage("goGameInterrupted", null);
 
   if (interruptedGame && interruptedGame.wasInProgress) {
-    showGameRecoveryDialog(interruptedGame);
+    // Auto-restore silently without showing confirm/alert dialogs
+    restoreGameState(interruptedGame);
   } else {
     // Show welcome message for new users
     if (gameHistory.totalGames === 0) {
@@ -266,6 +261,8 @@ async function coordinateGameTurn(row, col, player) {
     updateAllUI();
     drawBoard();
 
+    // Move log disabled; skip logging
+
     // Check if game ended
     if (game.gameOver) {
       await handleGameEnd();
@@ -305,7 +302,7 @@ async function handleAITurn() {
     const aiStartTime = performance.now();
 
     // Execute AI move
-    await makeAIMove();
+    const aiAction = await makeAIMove();
 
     // Calculate AI performance metrics
     const aiEndTime = performance.now();
@@ -324,6 +321,8 @@ async function handleAITurn() {
     // Update UI
     updateAllUI();
     drawBoard();
+
+    // Move log disabled; skip logging
 
     // Check if game ended after AI move
     if (game.gameOver) {
@@ -355,6 +354,8 @@ async function coordinatePassMove(player) {
       await handleGameEnd();
       return;
     }
+
+    // Move log disabled; skip logging
 
     // Handle AI response if needed
     if (shouldAIMove() && !game.gameOver) {
@@ -401,11 +402,14 @@ async function handleGameEnd(aiPerformance = null) {
         aiPerformance: aiPerformance,
       };
 
-      recordGameResult(
-        gameResult.historyWinner,
-        aiSettings.gameMode,
-        gameDetails
-      );
+      // Map winner to 'human'/'ai' for AI modes so stats are correct
+      let winnerForHistory = gameResult.historyWinner; // 'black' | 'white' | 'draw'
+      if (aiSettings.gameMode === "humanVsAi") {
+        if (winnerForHistory === "black") winnerForHistory = "human";
+        else if (winnerForHistory === "white") winnerForHistory = "ai";
+      }
+
+      recordGameResult(winnerForHistory, aiSettings.gameMode, gameDetails);
     }
 
     // Update UI with final results
@@ -413,11 +417,8 @@ async function handleGameEnd(aiPerformance = null) {
 
     // Show game end dialog
     await showGameEndDialog(gameResult, gameStats);
-
-    // Auto-start new game after delay
-    setTimeout(() => {
-      startNewGame();
-    }, 2000);
+    // Start new game only after user confirms in the result modal
+    startNewGame();
   } catch (error) {
     Logger.error("Error handling game end:", error);
     handleGameError(error);
@@ -433,6 +434,13 @@ function startNewGame() {
 
     // Reset game state
     resetGame();
+
+    // Reset AI stats so the performance panel shows fresh values
+    if (typeof resetAIStats === "function") {
+      resetAIStats();
+    }
+
+    // Move log disabled; skip clearing
 
     // Generate new game ID
     appState.currentGameId = generateGameId();
@@ -816,22 +824,7 @@ function showWelcomeMessage() {
  *
  * @param {Object} interruptedGame - Saved game state
  */
-function showGameRecoveryDialog(interruptedGame) {
-  const message = `
-        A previous game was interrupted. Would you like to continue where you left off?
-        
-        Game Details:
-        - Board Size: ${interruptedGame.boardSize}x${interruptedGame.boardSize}
-        - Mode: ${interruptedGame.gameMode}
-        - Last Played: ${new Date(interruptedGame.timestamp).toLocaleString()}
-    `;
-
-  if (confirm(message)) {
-    restoreGameState(interruptedGame);
-  } else {
-    removeFromLocalStorage("goGameInterrupted");
-  }
-}
+// Game recovery dialog removed (unused)
 
 /**
  * Restore game state from saved data
@@ -857,8 +850,6 @@ function restoreGameState(savedState) {
     updateGameSettings({ gameMode: savedState.gameMode });
     updateAllUI();
     drawBoard();
-
-    showUserMessage("Game restored successfully!", "success");
     Logger.info("Game state restored from interruption");
   } catch (error) {
     Logger.error("Failed to restore game state:", error);
@@ -877,23 +868,12 @@ function restoreGameState(savedState) {
  * @param {Object} gameStats - Game statistics
  */
 async function showGameEndDialog(gameResult, gameStats) {
-  const message = `
-        Game Over!
-        
-        Final Score:
-        Black: ${gameResult.blackScore} points
-        White: ${gameResult.whiteScore} points
-        
-        Winner: ${gameResult.winner}
-        
-        Game Statistics:
-        - Total Moves: ${gameStats.totalMoves}
-        - Duration: ${formatDuration(gameStats.duration)}
-        
-        Starting new game in 2 seconds...
-    `;
-
-  showUserMessage(message, "info", 2000);
+  // Use a modal popup with winner details instead of alert/toast
+  if (typeof showGameResultModal === "function") {
+    await showGameResultModal(gameResult, gameStats);
+  } else {
+    // Fallback: silently proceed without console output
+  }
 }
 
 /**

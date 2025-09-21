@@ -104,7 +104,7 @@ function resetGame() {
   // Game is active
   game.gameOver = false;
 
-  console.log(`New game started - Board size: ${BOARD_SIZE}x${BOARD_SIZE}`);
+  // Suppress non-error console output
 }
 
 /**
@@ -279,11 +279,7 @@ function removeCapturedGroups(board, opponentColor) {
             capturedCount++;
           }
 
-          console.log(
-            `Captured group of ${group.length} ${
-              opponentColor === BLACK ? "black" : "white"
-            } stones`
-          );
+          // Non-error logging suppressed
         }
       }
     }
@@ -356,17 +352,9 @@ function isLegalMove(board, row, col, player) {
 function makeMove(row, col, player) {
   // Validate move legality
   if (!isLegalMove(game.board, row, col, player)) {
-    console.log(
-      `Illegal move attempted at (${row}, ${col}) for ${
-        player === BLACK ? "black" : "white"
-      }`
-    );
+    // Illegal move attempted; return false without logging
     return false;
   }
-
-  console.log(
-    `${player === BLACK ? "Black" : "White"} plays at (${row}, ${col})`
-  );
 
   // Place the stone
   game.board[row][col] = player;
@@ -391,7 +379,7 @@ function makeMove(row, col, player) {
  * The game ends when both players pass consecutively
  */
 function passMove() {
-  console.log(`${game.currentPlayer === BLACK ? "Black" : "White"} passes`);
+  // Non-error logging suppressed
 
   // Increment pass counter
   game.consecutivePasses++;
@@ -424,8 +412,6 @@ function passMove() {
 function endGame() {
   game.gameOver = true;
 
-  console.log("Game ended - calculating scores...");
-
   // Count stones remaining on board
   const blackStones = game.board.flat().filter((cell) => cell === BLACK).length;
   const whiteStones = game.board.flat().filter((cell) => cell === WHITE).length;
@@ -447,9 +433,7 @@ function endGame() {
     historyWinner = "draw";
   }
 
-  console.log(
-    `Final scores - Black: ${blackScore}, White: ${whiteScore}, Winner: ${winner}`
-  );
+  // Non-error logging suppressed
 
   // Return game result for UI and history tracking
   return {
